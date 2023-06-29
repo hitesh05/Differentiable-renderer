@@ -61,40 +61,27 @@ def load_mtl(fn, mtrls=None, clear_ks=True):
         material = Material({'name': dt[i]})
         material['bsdf'] = 'pbr'
         x = mtrls[ind][dt[i]]
-        x = tensor(x, dtype=torch.float32)
-        x = x.contiguous()
+        if i == 1 or i == 2:
+            x = np.expand_dims(x, axis=2)
+            x = np.repeat(x, repeats=3, axis=2)
         material['map_kd'] = x
         material['ks'] = torch.tensor(tuple(float(d) for d in Ks), dtype=torch.float32, device='cuda')
         materials += [material]
     
-            
     # Convert everything to textures. Our code expects 'kd' and 'ks' to be texture maps. So replace constants with 1x1 maps
-    for mat in materials:
+    for ind, mat in enumerate(materials):
         if not 'bsdf' in mat:
             mat['bsdf'] = 'pbr'
 
         if 'map_kd' in mat:
             mat['kd'] = texture.Texture2D(mat['map_kd'])
-        # if 'map_kd' in mat:
-        #     mat['kd'] = texture.load_texture2D(os.path.join(mtl_path, mat['map_kd']))
-        # else:
-        #     mat['kd'] = texture.Texture2D(mat['kd'])
-        
-        # if 'map_ks' in mat:
-        #     mat['ks'] = texture.load_texture2D(os.path.join(mtl_path, mat['map_ks']), channels=3)
-        # else:
-        #     mat['ks'] = texture.Texture2D(mat['ks'])
-
-        # if 'bump' in mat:
-        #     mat['normal'] = texture.load_texture2D(os.path.join(mtl_path, mat['bump']), lambda_fn=lambda x: x * 2 - 1, channels=3)
+            
+        if 'ks' in mat:
+            mat['ks'] = texture.Texture2D(mat['ks'])
 
         # Convert Kd from sRGB to linear RGB
         mat['kd'] = texture.srgb_to_rgb(mat['kd'])
-
-        if clear_ks:
-            # Override ORM occlusion (red) channel by zeros. We hijack this channel
-            for mip in mat['ks'].getMips():
-                mip[..., 0] = 0.0 
+        materials[ind] = mat
 
     return materials
 
@@ -132,6 +119,7 @@ def _upscale_replicate(x, full_res):
     return x.permute(0, 2, 3, 1).contiguous()
 
 def merge_materials(materials, texcoords, tfaces, mfaces):
+    tfaces = list(tfaces)
     assert len(materials) > 0
     for mat in materials:
         assert mat['bsdf'] == materials[0]['bsdf'], "All materials must have the same BSDF (uber shader)"
@@ -152,7 +140,7 @@ def merge_materials(materials, texcoords, tfaces, mfaces):
             max_res = np.maximum(max_res, tex_res) if max_res is not None else tex_res
     
     # Compute size of compund texture and round up to nearest PoT
-    full_res = 2**np.ceil(np.log2(max_res * np.array([1, len(materials)]))).astype(np.int)
+    full_res = 2**np.ceil(np.log2(max_res * np.array([1, len(materials)]))).astype(np.int32)
 
     # Normalize texture resolution across all materials & combine into a single large texture
     for tex in textures:

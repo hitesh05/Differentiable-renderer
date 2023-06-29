@@ -14,6 +14,7 @@ from . import texture
 from . import mesh
 from . import material
 from . import load_glb
+import numpy as np
 
 def tensor(*args, **kwargs):
     return torch.tensor(*args, device='cuda', **kwargs)
@@ -34,12 +35,6 @@ def _find_mat(materials, name):
 
 def load_obj(filename, clear_ks=True, mtl_override=None):
     model_components, materials = load_glb.load_glb(filename)
-    obj_path = os.path.dirname(filename)
-
-    # Read entire file
-    with open(filename, 'r') as f:
-        lines = f.readlines()
-
     # Load materials
     all_materials = [
         {
@@ -49,15 +44,7 @@ def load_obj(filename, clear_ks=True, mtl_override=None):
             'ks'   : texture.Texture2D(torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda'))
         }
     ]
-    # if mtl_override is None: 
-    #     for line in lines:
-    #         if len(line.split()) == 0:
-    #             continue
-    #         if line.split()[0] == 'mtllib':
-    #             all_materials += material.load_mtl(os.path.join(obj_path, line.split()[1]), clear_ks) # Read in entire material library
-    # else:
-    #     all_materials += material.load_mtl(mtl_override)
-    all_materials += material.load_mtl(mtl_override, materials=materials)
+    all_materials += material.load_mtl(mtl_override, mtrls=materials)
 
     # load vertices
     vertices, texcoords, normals  = [], [], []
@@ -65,19 +52,6 @@ def load_obj(filename, clear_ks=True, mtl_override=None):
     texcoords = model_components[0]['primitives'][0]['tex_coords']
     normals = model_components[0]['primitives'][0]['normals']
     
-    # for line in lines:
-    #     if len(line.split()) == 0:
-    #         continue
-        
-    #     prefix = line.split()[0].lower()
-    #     if prefix == 'v':
-    #         vertices.append([float(v) for v in line.split()[1:]])
-    #     elif prefix == 'vt':
-    #         val = [float(v) for v in line.split()[1:]]
-    #         texcoords.append([val[0], 1.0 - val[1]])
-    #     elif prefix == 'vn':
-    #         normals.append([float(v) for v in line.split()[1:]])
-
     # load faces
     activeMatIdx = None
     used_materials = []
@@ -85,42 +59,18 @@ def load_obj(filename, clear_ks=True, mtl_override=None):
     faces = model_components[0]['primitives'][0]['triangle_idx']
     tfaces = model_components[0]['primitives'][0]['triangle_idx']
     nfaces = model_components[0]['primitives'][0]['triangle_idx']
-
-    for line in lines:
-        if len(line.split()) == 0:
-            continue
-
-        prefix = line.split()[0].lower()
-        if prefix == 'usemtl': # Track used materials
-            mat = _find_mat(all_materials, line.split()[1])
-            if not mat in used_materials:
-                used_materials.append(mat)
-            activeMatIdx = used_materials.index(mat)
-        elif prefix == 'f': # Parse face
-            vs = line.split()[1:]
-            nv = len(vs)
-            vv = vs[0].split('/')
-            v0 = int(vv[0]) - 1
-            t0 = int(vv[1]) - 1 if vv[1] != "" else -1
-            n0 = int(vv[2]) - 1 if vv[2] != "" else -1
-            for i in range(nv - 2): # Triangulate polygons
-                vv = vs[i + 1].split('/')
-                v1 = int(vv[0]) - 1
-                t1 = int(vv[1]) - 1 if vv[1] != "" else -1
-                n1 = int(vv[2]) - 1 if vv[2] != "" else -1
-                vv = vs[i + 2].split('/')
-                v2 = int(vv[0]) - 1
-                t2 = int(vv[1]) - 1 if vv[1] != "" else -1
-                n2 = int(vv[2]) - 1 if vv[2] != "" else -1
-                mfaces.append(activeMatIdx)
-                faces.append([v0, v1, v2])
-                tfaces.append([t0, t1, t2])
-                nfaces.append([n0, n1, n2])
+    faces = faces.astype(np.int16)
+    tfaces = tfaces.astype(np.int16)
+    nfaces = nfaces.astype(np.int16)
+    mfaces.extend([0]*len(faces))
+    for mat in all_materials:
+        used_materials.append(mat)
+    
     assert len(tfaces) == len(faces) and len(nfaces) == len (faces)
 
     # Create an "uber" material by combining all textures into a larger texture
     if len(used_materials) > 1:
-        uber_material, texcoords, tfaces = material.merge_materials(used_materials, texcoords, tfaces, mfaces)
+        uber_material, texcoords, tfaces = material.merge_materials(all_materials, texcoords, tfaces, mfaces)
     else:
         uber_material = used_materials[0]
 

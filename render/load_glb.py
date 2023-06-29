@@ -7,7 +7,6 @@ import trimesh
 from PIL import Image
 import io
 
-import util
 import imageio
 import torch
 

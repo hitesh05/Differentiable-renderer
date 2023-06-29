@@ -32,9 +32,6 @@ from render import render
 
 RADIUS = 3.0
 
-# Enable to debug back-prop anomalies
-# torch.autograd.set_detect_anomaly(True)
-
 ###############################################################################
 # Mix background into a dataset image
 ###############################################################################
@@ -193,3 +190,13 @@ if __name__ == "__main__":
     if os.path.splitext(FLAGS.ref_mesh)[1] == '.glb':
         ref_mesh         = mesh.load_mesh(FLAGS.ref_mesh, FLAGS.mtl_override)
         dataset_train    = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=False)
+        
+    # print('dataset train\n', dataset_train[0]['img'].detach().cpu().numpy())
+    # ==============================================================================================
+    #  Create env light with trainable parameters
+    # ==============================================================================================
+    
+    if FLAGS.learn_light:
+        lgt = light.create_trainable_env_rnd(512, scale=0.0, bias=0.5)
+    else:
+        lgt = light.load_env(FLAGS.envmap, scale=FLAGS.env_scale)
