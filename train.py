@@ -23,6 +23,35 @@ from render import render
 
 RADIUS = 3.0
 
+def z_buffering(rasterized_outputs, antialiased_images):
+    rasterized_outputs = torch.cat(rasterized_outputs, dim=0)  # Shape: [num_components, height, width, 4] --> 3rd channel gives depth value
+    antialiased_images = torch.cat(antialiased_images, dim=0) # Shape: [num_components, height, width, num_channels]
+    _, height, width, num_channels = antialiased_images.shape
+
+    # Initialize the z-buffer and final color buffer
+    z_buffer = torch.ones((height, width)) * float('inf')
+    z_buffer = z_buffer.cuda()
+    final_image = torch.zeros((height, width, num_channels))
+    final_image = antialiased_images[0,:,:,:].squeeze()
+    final_image = final_image.cuda()
+
+    # Combine the components using z-buffering
+    for index in range(len(rasterized_outputs)):
+        depth = rasterized_outputs[index, :,:,2]
+        # torch.set_printoptions(profile="full")
+        # print(depth)
+        depth = depth.cuda()
+        color = antialiased_images[index,:,:,:]
+        color = color.cuda()
+        # Find the pixels where the current component is closer than the existing z-buffer
+        closer_pixels = depth < z_buffer
+        closer_pixels = closer_pixels.cuda()
+        z_buffer[closer_pixels] = depth[closer_pixels]
+        final_image[closer_pixels] = color[closer_pixels]
+
+    return final_image.detach().cpu().numpy()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='nvdiffrec')
     parser.add_argument('--config', type=str, default=None, help='Config file')
