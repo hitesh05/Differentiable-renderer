@@ -1,12 +1,3 @@
-# Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
-#
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction, 
-# disclosure or distribution of this material and related documentation 
-# without an express license agreement from NVIDIA CORPORATION or 
-# its affiliates is strictly prohibited.
-
 import os
 import time
 import argparse
@@ -18,7 +9,7 @@ import nvdiffrast.torch as dr
 import xatlas
 
 # Import data readers / generators
-from dataset.dataset_mesh import DatasetMesh
+from dataset.my_mesh import MyMesh
 
 import render.renderutils as ru
 from render import obj
@@ -31,76 +22,6 @@ from render import light
 from render import render
 
 RADIUS = 3.0
-
-###############################################################################
-# Mix background into a dataset image
-###############################################################################
-
-@torch.no_grad()
-def prepare_batch(target, bg_type='black'):
-    assert len(target['img'].shape) == 4, "Image shape should be [n, h, w, c]"
-    if bg_type == 'checker':
-        background = torch.tensor(util.checkerboard(target['img'].shape[1:3], 8), dtype=torch.float32, device='cuda')[None, ...]
-    elif bg_type == 'black':
-        background = torch.zeros(target['img'].shape[0:3] + (3,), dtype=torch.float32, device='cuda')
-    elif bg_type == 'white':
-        background = torch.ones(target['img'].shape[0:3] + (3,), dtype=torch.float32, device='cuda')
-    elif bg_type == 'reference':
-        background = target['img'][..., 0:3]
-    elif bg_type == 'random':
-        background = torch.rand(target['img'].shape[0:3] + (3,), dtype=torch.float32, device='cuda')
-    else:
-        assert False, "Unknown background type %s" % bg_type
-
-    target['mv'] = target['mv'].cuda()
-    target['mvp'] = target['mvp'].cuda()
-    target['campos'] = target['campos'].cuda()
-    target['img'] = target['img'].cuda()
-    target['background'] = background
-
-    target['img'] = torch.cat((torch.lerp(background, target['img'][..., 0:3], target['img'][..., 3:4]), target['img'][..., 3:4]), dim=-1)
-
-    return target
-
-###############################################################################
-# UV - map geometry & convert to a mesh
-###############################################################################
-
-@torch.no_grad()
-def xatlas_uvmap(glctx, geometry, mat, FLAGS):
-    eval_mesh = geometry.getMesh(mat)
-    
-    # Create uvs with xatlas
-    v_pos = eval_mesh.v_pos.detach().cpu().numpy()
-    t_pos_idx = eval_mesh.t_pos_idx.detach().cpu().numpy()
-    vmapping, indices, uvs = xatlas.parametrize(v_pos, t_pos_idx)
-
-    # Convert to tensors
-    indices_int64 = indices.astype(np.uint64, casting='same_kind').view(np.int64)
-    
-    uvs = torch.tensor(uvs, dtype=torch.float32, device='cuda')
-    faces = torch.tensor(indices_int64, dtype=torch.int64, device='cuda')
-
-    new_mesh = mesh.Mesh(v_tex=uvs, t_tex_idx=faces, base=eval_mesh)
-
-    mask, kd, ks, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_ks_normal'])
-    
-    if FLAGS.layers > 1:
-        kd = torch.cat((kd, torch.rand_like(kd[...,0:1])), dim=-1)
-
-    kd_min, kd_max = torch.tensor(FLAGS.kd_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.kd_max, dtype=torch.float32, device='cuda')
-    ks_min, ks_max = torch.tensor(FLAGS.ks_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.ks_max, dtype=torch.float32, device='cuda')
-    nrm_min, nrm_max = torch.tensor(FLAGS.nrm_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.nrm_max, dtype=torch.float32, device='cuda')
-
-    new_mesh.material = material.Material({
-        'bsdf'   : mat['bsdf'],
-        'kd'     : texture.Texture2D(kd, min_max=[kd_min, kd_max]),
-        'ks'     : texture.Texture2D(ks, min_max=[ks_min, ks_max]),
-        'normal' : texture.Texture2D(normal, min_max=[nrm_min, nrm_max])
-    })
-
-    return new_mesh
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='nvdiffrec')
@@ -187,16 +108,30 @@ if __name__ == "__main__":
     # ==============================================================================================
     #  Create data pipeline
     # ==============================================================================================
+    outs = []
+    rasterized_outputs = []
+    antialised_images = []
     if os.path.splitext(FLAGS.ref_mesh)[1] == '.glb':
-        ref_mesh         = mesh.load_mesh(FLAGS.ref_mesh, FLAGS.mtl_override)
-        dataset_train    = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=False)
-        
-    # print('dataset train\n', dataset_train[0]['img'].detach().cpu().numpy())
-    # ==============================================================================================
-    #  Create env light with trainable parameters
-    # ==============================================================================================
+        for ind in range(6):
+            ref_mesh = mesh.load_mesh(FLAGS.ref_mesh, ind, FLAGS.mtl_override)
+            my_mesh = MyMesh(ref_mesh, glctx, RADIUS, FLAGS)
+            out = my_mesh.get_output()
+            outs.append(out)
+            rasterized_outputs.append(out['rast'])
+            antialised_images.append(out['img'])
     
-    if FLAGS.learn_light:
-        lgt = light.create_trainable_env_rnd(512, scale=0.0, bias=0.5)
-    else:
-        lgt = light.load_env(FLAGS.envmap, scale=FLAGS.env_scale)
+    # print('performing z-buffering')
+    # img = z_buffering(rasterized_outputs, antialised_images)
+    
+    # print('saving the final image obtained')
+    # util.save_image('images/output_final.png', img)
+    final_img = antialised_images[0].squeeze().detach().cpu().numpy()
+    for i in range(1,6):
+        x = antialised_images[i].squeeze().detach().cpu().numpy()
+        final_img += x
+    print(antialised_images[0].squeeze().detach().cpu().numpy().shape, final_img.shape)
+    print('saving image')
+    util.save_image(f'combined_image.png', final_img)
+    # for ind in range(6):
+    #     img = antialised_images[ind].squeeze().detach().cpu().numpy()
+    #     util.save_image(f'images/out_{ind}.png', img)

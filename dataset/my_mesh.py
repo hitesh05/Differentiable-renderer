@@ -21,14 +21,13 @@ from .dataset import Dataset
 # Reference dataset using mesh & rendering
 ###############################################################################
 
-class DatasetMesh(Dataset):
+class MyMesh():
 
-    def __init__(self, ref_mesh, glctx, cam_radius, FLAGS, validate=False):
+    def __init__(self, ref_mesh, glctx, cam_radius, FLAGS):
         # Init 
         self.glctx              = glctx
         self.cam_radius         = cam_radius
         self.FLAGS              = FLAGS
-        self.validate           = validate
         self.fovy               = np.deg2rad(45)
         self.aspect             = FLAGS.train_res[1] / FLAGS.train_res[0]
 
@@ -44,59 +43,31 @@ class DatasetMesh(Dataset):
 
         # Load environment map texture
         self.envlight = light.load_env(FLAGS.envmap, scale=FLAGS.env_scale)
-        
         self.ref_mesh = mesh.compute_tangents(ref_mesh)
+        self.mv, self.mvp, self.campos, self.iter_res, self.iter_spp = self._rotate_scene()
 
-    def _rotate_scene(self, itr):
+    def _rotate_scene(self):
         proj_mtx = util.perspective(self.fovy, self.FLAGS.display_res[1] / self.FLAGS.display_res[0], self.FLAGS.cam_near_far[0], self.FLAGS.cam_near_far[1])
 
         # Smooth rotation for display.
-        ang    = (itr / 50) * np.pi * 2
+        ang    = (3/4 ) * np.pi * 2
         mv     = util.translate(0, 0, -self.cam_radius) @ (util.rotate_x(-0.4) @ util.rotate_y(ang))
         mvp    = proj_mtx @ mv
         campos = torch.linalg.inv(mv)[:3, 3]
 
         return mv[None, ...].cuda(), mvp[None, ...].cuda(), campos[None, ...].cuda(), self.FLAGS.display_res, self.FLAGS.spp
-
-    def _random_scene(self):
-        # ==============================================================================================
-        #  Setup projection matrix
-        # ==============================================================================================
-        iter_res = self.FLAGS.train_res
-        proj_mtx = util.perspective(self.fovy, iter_res[1] / iter_res[0], self.FLAGS.cam_near_far[0], self.FLAGS.cam_near_far[1])
-
-        # ==============================================================================================
-        #  Random camera & light position
-        # ==============================================================================================
-
-        # Random rotation/translation matrix for optimization.
-        mv     = util.translate(0, 0, -self.cam_radius) @ util.random_rotation_translation(0.25)
-        mvp    = proj_mtx @ mv
-        campos = torch.linalg.inv(mv)[:3, 3]
-
-        return mv[None, ...].cuda(), mvp[None, ...].cuda(), campos[None, ...].cuda(), iter_res, self.FLAGS.spp # Add batch dimension
-
-    def __len__(self):
-        return 50 if self.validate else (self.FLAGS.iter + 1) * self.FLAGS.batch
-
-    def __getitem__(self, itr):
-        # ==============================================================================================
-        #  Randomize scene parameters
-        # ==============================================================================================
-
-        if self.validate:
-            mv, mvp, campos, iter_res, iter_spp = self._rotate_scene(itr)
-        else:
-            mv, mvp, campos, iter_res, iter_spp = self._random_scene()
-
-        img = render.render_mesh(self.glctx, self.ref_mesh, mvp, campos, self.envlight, iter_res, spp=iter_spp, 
-                                num_layers=self.FLAGS.layers, msaa=True, background=None)['shaded']
+    
+    def get_output(self):
+        rast, out = render.render_mesh(self.glctx, self.ref_mesh, self.mvp, self.campos, self.envlight, self.iter_res, spp=self.iter_spp, 
+                                num_layers=self.FLAGS.layers, msaa=True, background=None)
+        img = out['shaded']
 
         return {
-            'mv' : mv,
-            'mvp' : mvp,
-            'campos' : campos,
-            'resolution' : iter_res,
-            'spp' : iter_spp,
-            'img' : img
+            'mv' : self.mv,
+            'mvp' : self.mvp,
+            'campos' : self.campos,
+            'resolution' : self.iter_res,
+            'spp' : self.iter_spp,
+            'img' : img,
+            'rast': rast
         }

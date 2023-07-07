@@ -14,6 +14,22 @@ import nvdiffrast.torch as dr
 
 from . import util
 
+######################################################################################
+# Smooth pooling / mip computation with linear gradient upscaling
+######################################################################################
+
+class texture2d_mip(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, texture):
+        return util.avg_pool_nhwc(texture, (2,2))
+
+    @staticmethod
+    def backward(ctx, dout):
+        gy, gx = torch.meshgrid(torch.linspace(0.0 + 0.25 / dout.shape[1], 1.0 - 0.25 / dout.shape[1], dout.shape[1]*2, device="cuda"), 
+                                torch.linspace(0.0 + 0.25 / dout.shape[2], 1.0 - 0.25 / dout.shape[2], dout.shape[2]*2, device="cuda"),
+                                indexing='ij')
+        uv = torch.stack((gx, gy), dim=-1)
+        return dr.texture(dout * 0.25, uv[None, ...].contiguous(), filter_mode='linear', boundary_mode='clamp')
 
 ########################################################################################################
 # Simple texture class. A texture can be either 
@@ -83,7 +99,7 @@ class Texture2D(torch.nn.Module):
         with torch.no_grad():
             for mip in self.getMips():
                 mip = util.safe_normalize(mip)
-
+                
 ########################################################################################################
 # Convert texture to and from SRGB
 ########################################################################################################
@@ -93,44 +109,3 @@ def srgb_to_rgb(texture):
 
 def rgb_to_srgb(texture):
     return Texture2D(list(util.rgb_to_srgb(mip) for mip in texture.getMips()))
-
-########################################################################################################
-# Utility functions for loading / storing a texture
-########################################################################################################
-
-def _load_mip2D(fn, lambda_fn=None, channels=None):
-    imgdata = torch.tensor(util.load_image(fn), dtype=torch.float32, device='cuda')
-    if channels is not None:
-        imgdata = imgdata[..., 0:channels]
-    if lambda_fn is not None:
-        imgdata = lambda_fn(imgdata)
-    return imgdata.detach().clone()
-
-def load_texture2D(fn, lambda_fn=None, channels=None):
-    base, ext = os.path.splitext(fn)
-    if os.path.exists(base + "_0" + ext):
-        mips = []
-        while os.path.exists(base + ("_%d" % len(mips)) + ext):
-            mips += [_load_mip2D(base + ("_%d" % len(mips)) + ext, lambda_fn, channels)]
-        return Texture2D(mips)
-    else:
-        return Texture2D(_load_mip2D(fn, lambda_fn, channels))
-
-def _save_mip2D(fn, mip, mipidx, lambda_fn):
-    if lambda_fn is not None:
-        data = lambda_fn(mip).detach().cpu().numpy()
-    else:
-        data = mip.detach().cpu().numpy()
-
-    if mipidx is None:
-        util.save_image(fn, data)
-    else:
-        base, ext = os.path.splitext(fn)
-        util.save_image(base + ("_%d" % mipidx) + ext, data)
-
-def save_texture2D(fn, tex, lambda_fn=None):
-    if isinstance(tex.data, list):
-        for i, mip in enumerate(tex.data):
-            _save_mip2D(fn, mip[0,...], i, lambda_fn)
-    else:
-        _save_mip2D(fn, tex.data[0,...], None, lambda_fn)

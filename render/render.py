@@ -56,8 +56,7 @@ def shade(
             perturbed_nrm = material['normal'].sample(gb_texc, gb_texc_deriv)
         kd_grad    = torch.sum(torch.abs(kd_jitter[..., 0:3] - kd[..., 0:3]), dim=-1, keepdim=True) / 3
 
-    # Separate kd into alpha and color, default alpha = 1
-    alpha = kd[..., 3:4] if kd.shape[-1] == 4 else torch.ones_like(kd[..., 0:1]) 
+    alpha = torch.ones_like(kd[..., 0:1])
     kd = kd[..., 0:3]
 
     ################################################################################
@@ -103,12 +102,6 @@ def shade(
     }
     return buffers
 
-# ==============================================================================================
-#  Render a depth slice of the mesh (scene), some limitations:
-#  - Single mesh
-#  - Single light
-#  - Single material
-# ==============================================================================================
 def render_layer(
         rast,
         rast_deriv,
@@ -178,12 +171,6 @@ def render_layer(
     # Return buffers
     return buffers
 
-# ==============================================================================================
-#  Render a depth peeled mesh (scene), some limitations:
-#  - Single mesh
-#  - Single light
-#  - Single material
-# ==============================================================================================
 def render_mesh(
         ctx,
         mesh,
@@ -223,12 +210,10 @@ def render_mesh(
     # clip space transform
     v_pos_clip = ru.xfm_points(mesh.v_pos[None, ...], mtx_in)
 
-    # Render all layers front-to-back
     layers = []
-    with dr.DepthPeeler(ctx, v_pos_clip, mesh.t_pos_idx.int(), full_res) as peeler:
-        for _ in range(num_layers):
-            rast, db = peeler.rasterize_next_layer()
-            layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf), rast)]
+    rast, db = dr.rasterize(ctx, v_pos_clip, mesh.t_pos_idx.int(), full_res)
+    layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf), rast)]
+    
 
     # Setup background
     if background is not None:
@@ -249,27 +234,4 @@ def render_mesh(
         # Downscale to framebuffer resolution. Use avg pooling 
         out_buffers[key] = util.avg_pool_nhwc(accum, spp) if spp > 1 else accum
 
-    return out_buffers
-
-# ==============================================================================================
-#  Render UVs
-# ==============================================================================================
-def render_uv(ctx, mesh, resolution, mlp_texture):
-
-    # clip space transform 
-    uv_clip = mesh.v_tex[None, ...]*2.0 - 1.0
-
-    # pad to four component coordinate
-    uv_clip4 = torch.cat((uv_clip, torch.zeros_like(uv_clip[...,0:1]), torch.ones_like(uv_clip[...,0:1])), dim = -1)
-
-    # rasterize
-    rast, _ = dr.rasterize(ctx, uv_clip4, mesh.t_tex_idx.int(), resolution)
-
-    # Interpolate world space position
-    gb_pos, _ = interpolate(mesh.v_pos[None, ...], rast, mesh.t_pos_idx.int())
-
-    # Sample out textures from MLP
-    all_tex = mlp_texture.sample(gb_pos)
-    assert all_tex.shape[-1] == 9 or all_tex.shape[-1] == 10, "Combined kd_ks_normal must be 9 or 10 channels"
-    perturbed_nrm = all_tex[..., -3:]
-    return (rast[..., -1:] > 0).float(), all_tex[..., :-6], all_tex[..., -6:-3], util.safe_normalize(perturbed_nrm)
+    return rast, out_buffers
