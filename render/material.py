@@ -1,12 +1,3 @@
-# Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
-#
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction, 
-# disclosure or distribution of this material and related documentation 
-# without an express license agreement from NVIDIA CORPORATION or 
-# its affiliates is strictly prohibited.
-
 import os
 import numpy as np
 import torch
@@ -52,6 +43,7 @@ class Material(torch.nn.Module):
 ######################################################################################
 @torch.no_grad()
 def load_mtl(fn, mtrls=None, ind = 0, clear_ks=True):
+    # ind = (ind+2)%5
     materials = []
     dt = {0: 'base_color', 1: 'roughness', 2: 'metallic', 3: 'normal'}
     material = Material({'name': 'Material'})
@@ -65,7 +57,7 @@ def load_mtl(fn, mtrls=None, ind = 0, clear_ks=True):
             x1 = mtrls[ind][dt[i+1]]
             x2 = np.zeros_like(x1)
             x = np.stack((x2,x,x1), axis=-1)
-            x = np.pad(x, ((0, 0), (0, 0), (0, 1)), mode='constant')
+            # x = np.pad(x, ((0, 0), (0, 0), (0, 1)), mode='constant')
             material['map_ks'] = x
         elif i ==3:
             material['map_normal'] = x

@@ -213,49 +213,7 @@ def load_glb(model_path):
             
     apply_transformations(model_components, ref_pose)  
     # out_path = 'textures/'  
-    materials = extract_materials(glb_mesh)
+    # materials = extract_materials(glb_mesh)
+    total = len(model_components)
     
-    return model_components, materials
-
-# if __name__ == "__main__":
-#     model_path = '../data/chair_custom.glb'
-#     model_components, materials = load_glb(model_path)
-#     ind = -1
-#     for k,v in model_components.items():
-#         ind += 1
-#         # print(k,v['primitives'])
-#         a = v['primitives'][0]['triangle_idx']
-#         a = a.astype(np.int16)
-#         a = tensor(a, dtype=torch.int32) # triangle index
-#         a = a.contiguous()
-        
-#         b = v['primitives'][0]['vertex_coords']
-#         b = tensor(b, dtype=torch.float32) # vertex coordinates
-#         b = b.contiguous()
-#         glctx = dr.RasterizeCudaContext()
-        
-#         tex_coords = v['primitives'][0]['tex_coords']
-#         # tex_coords = np.pad(tex_coords, ((0, 0), (0, 1)), mode='constant', constant_values=0)
-#         tex_coords = tensor(tex_coords, dtype=torch.float32)
-#         tex_coords = tex_coords.contiguous()
-        
-#         normals = v['primitives'][0]['normals']
-#         normals = tensor(normals, dtype=torch.float32)
-#         normals = normals.contiguous()
-
-#         base_color_tex = materials[ind]['base_color']
-#         base_color_tex = tensor(base_color_tex, dtype=torch.float32)
-#         base_color_tex = base_color_tex.contiguous()
-        
-#         roughness_tex = materials[ind]['roughness']
-#         roughness_tex = tensor(roughness_tex, dtype=torch.float32)
-#         roughness_tex = roughness_tex.contiguous()
-        
-#         metallic_tex = materials[ind]['metallic']
-#         metallic_tex = tensor(metallic_tex, dtype=torch.float32)
-#         metallic_tex = metallic_tex.contiguous()
-        
-#         normal_tex = materials[ind]['normal']
-#         normal_tex = tensor(normal_tex, dtype=torch.float32)
-#         normal_tex = normal_tex.contiguous()
-#         break
+    return total, model_components, None

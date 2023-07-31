@@ -1,4 +1,6 @@
 import os
+import random
+import imageio
 import time
 import argparse
 import json
@@ -7,6 +9,7 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 import xatlas
+from tqdm import tqdm
 
 # Import data readers / generators
 from dataset.my_mesh import MyMesh
@@ -20,6 +23,7 @@ from render import texture
 from render import mlptexture
 from render import light
 from render import render
+from render import load_glb
 
 RADIUS = 3.0
 
@@ -50,6 +54,48 @@ def z_buffering(rasterized_outputs, antialiased_images):
         final_image[closer_pixels] = color[closer_pixels]
 
     return final_image.detach().cpu().numpy()
+
+def load_materials(length):
+    materials_dir = "materials/"
+    num_materials_to_select = length
+
+    # Get a list of all material directories
+    all_material_dirs = os.listdir(materials_dir)
+
+    # Randomly select N materials from the list
+    selected_material_dirs = random.sample(all_material_dirs, num_materials_to_select)
+
+    # Initialize an empty list to store the loaded materials
+    loaded_materials = []
+
+    # Load each selected material
+    for material_dir in selected_material_dirs:
+        material_path = os.path.join(materials_dir, material_dir)
+
+        number = random.randint(0, 9)
+        base_color_file = os.path.join(material_path, f"{number}/", "basecolor", 'basecolor.png')
+        roughness_file = os.path.join(material_path, f"{number}/", "roughness", 'roughness.png')
+        metallic_file = os.path.join(material_path, f"{number}/", "metallic", 'metallic.png')
+        normal_file = os.path.join(material_path, f"{number}/", "normal", 'normal.png')
+
+        # Load each material PNG file as numpy array
+        base_color = imageio.imread(base_color_file) / 255.0  # Normalize to [0, 1]
+        roughness = imageio.imread(roughness_file) / 255.0
+        metallic = imageio.imread(metallic_file) / 255.0
+        normal = imageio.imread(normal_file) / 255.0
+
+        # Create the dictionary for the material
+        material_dict = {
+            'name': material_dir,  # Use the material directory name as the material name
+            'base_color': base_color.astype(np.float32),
+            'roughness': roughness.astype(np.float32),
+            'metallic': metallic.astype(np.float32),
+            'normal': normal.astype(np.float32)
+        }
+
+        # Append the material dictionary to the list
+        loaded_materials.append(material_dict)
+    return loaded_materials
 
 
 if __name__ == "__main__":
@@ -99,39 +145,6 @@ if __name__ == "__main__":
     FLAGS.cam_near_far        = [0.1, 1000.0]
     FLAGS.learn_light         = True
 
-    FLAGS.local_rank = 0
-    FLAGS.multi_gpu  = "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1
-    if FLAGS.multi_gpu:
-        if "MASTER_ADDR" not in os.environ:
-            os.environ["MASTER_ADDR"] = 'localhost'
-        if "MASTER_PORT" not in os.environ:
-            os.environ["MASTER_PORT"] = '23456'
-
-        FLAGS.local_rank = int(os.environ["LOCAL_RANK"])
-        torch.cuda.set_device(FLAGS.local_rank)
-        torch.distributed.init_process_group(backend="nccl", init_method="env://")
-
-    if FLAGS.config is not None:
-        data = json.load(open(FLAGS.config, 'r'))
-        for key in data:
-            FLAGS.__dict__[key] = data[key]
-
-    if FLAGS.display_res is None:
-        FLAGS.display_res = FLAGS.train_res
-    if FLAGS.out_dir is None:
-        FLAGS.out_dir = 'out/cube_%d' % (FLAGS.train_res)
-    else:
-        FLAGS.out_dir = 'out/' + FLAGS.out_dir
-
-    if FLAGS.local_rank == 0:
-        print("Config / Flags:")
-        print("---------")
-        for key in FLAGS.__dict__.keys():
-            print(key, FLAGS.__dict__[key])
-        print("---------")
-
-    os.makedirs(FLAGS.out_dir, exist_ok=True)
-
     glctx = dr.RasterizeGLContext()
 
     # ==============================================================================================
@@ -140,27 +153,40 @@ if __name__ == "__main__":
     outs = []
     rasterized_outputs = []
     antialised_images = []
+    depths = []
+    
     if os.path.splitext(FLAGS.ref_mesh)[1] == '.glb':
-        for ind in range(6):
-            ref_mesh = mesh.load_mesh(FLAGS.ref_mesh, ind, FLAGS.mtl_override)
+        length, model_components, _ = load_glb.load_glb(FLAGS.ref_mesh)
+        materials = load_materials(length)
+        for ind in range(length):
+            ref_mesh = mesh.load_mesh(FLAGS.ref_mesh, ind, length, model_components, materials, FLAGS.mtl_override)
             my_mesh = MyMesh(ref_mesh, glctx, RADIUS, FLAGS)
             out = my_mesh.get_output()
             outs.append(out)
-            rasterized_outputs.append(out['rast'])
-            antialised_images.append(out['img'])
+            x = out['rast'].squeeze()
+            depth = x[:,:,2]
+            depth = depth.detach().cpu().numpy()
+            print(depth.shape)
+            depths.append(depth)
+            rasterized_outputs.append(out['rast'].squeeze().detach().cpu().numpy())
+            antialised_images.append(out['img'].squeeze().detach().cpu().numpy())
     
-    # print('performing z-buffering')
-    # img = z_buffering(rasterized_outputs, antialised_images)
+    canvas_ht = antialised_images[0].shape[0]
+    canvas_wd = antialised_images[0].shape[1]
+    canvas_channels = antialised_images[0].shape[2]
+    canvas = np.zeros((canvas_ht, canvas_wd, canvas_channels), dtype=np.float32)
+    canvas_depth = np.full((canvas_ht, canvas_wd), np.inf, dtype=np.float32)
     
-    # print('saving the final image obtained')
-    # util.save_image('images/output_final.png', img)
-    final_img = antialised_images[0].squeeze().detach().cpu().numpy()
-    for i in range(1,6):
-        x = antialised_images[i].squeeze().detach().cpu().numpy()
-        final_img += x
-    print(antialised_images[0].squeeze().detach().cpu().numpy().shape, final_img.shape)
-    print('saving image')
-    util.save_image(f'combined_image.png', final_img)
-    # for ind in range(6):
-    #     img = antialised_images[ind].squeeze().detach().cpu().numpy()
-    #     util.save_image(f'images/out_{ind}.png', img)
+    for image, depth in zip(antialised_images, depths):
+        # Iterate over each pixel in the image
+        for i in tqdm(range(canvas_ht)):
+            for j in range(canvas_wd):
+                # Retrieve the depth value for the current pixel
+                pixel_depth = depth[i, j]
+                # Check if the current pixel depth is less than the depth in the canvas
+                if pixel_depth != 0 and (pixel_depth < canvas_depth[i, j]):
+                    # print(pixel_depth, canvas_depth[i,j])
+                    # Update the corresponding pixel in the canvas with the image pixel value
+                    canvas[i, j, :] = image[i, j, :]
+                    canvas_depth[i,j] = pixel_depth
+    util.save_image(f'combined_image.png', canvas)

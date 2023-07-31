@@ -1,12 +1,3 @@
-# Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
-#
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction, 
-# disclosure or distribution of this material and related documentation 
-# without an express license agreement from NVIDIA CORPORATION or 
-# its affiliates is strictly prohibited.
-
 import torch
 import nvdiffrast.torch as dr
 
@@ -56,7 +47,8 @@ def shade(
             perturbed_nrm = material['normal'].sample(gb_texc, gb_texc_deriv)
         kd_grad    = torch.sum(torch.abs(kd_jitter[..., 0:3] - kd[..., 0:3]), dim=-1, keepdim=True) / 3
 
-    alpha = torch.ones_like(kd[..., 0:1])
+    # alpha = torch.ones_like(kd[..., 0:1])
+    alpha = kd[..., 3:4] if kd.shape[-1] == 4 else torch.ones_like(kd[..., 0:1]) 
     kd = kd[..., 0:3]
 
     ################################################################################
@@ -76,6 +68,9 @@ def shade(
     if bsdf == 'pbr':
         if isinstance(lgt, light.EnvironmentLight):
             shaded_col = lgt.shade(gb_pos, gb_normal, kd, ks, view_pos, specular=True)
+            # shaded_col = lgt.phong_shading(gb_pos, gb_normal, kd, ks, view_pos)
+            # shaded_col = lgt.cook_torrance_shading(gb_pos, gb_normal, kd,ks,view_pos)
+            # shaded_col = lgt.oren_nayar_shading(gb_pos, gb_normal, kd,ks,view_pos)
         else:
             assert False, "Invalid light type"
     elif bsdf == 'diffuse':

@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import nvdiffrast.torch as dr
+import pyshtools
 
 from . import util
 from . import renderutils as ru
@@ -112,38 +113,72 @@ class EnvironmentLight(torch.nn.Module):
             shaded_col += spec * reflectance
 
         return shaded_col * (1.0 - ks[..., 0:1]) # Modulate by hemisphere visibility
+    
+    def phong_shading(self, gb_pos, gb_normal, kd, ks, view_pos, shininess=1):
+        wo = util.safe_normalize(view_pos - gb_pos)
+        light_dir = util.safe_normalize(view_pos - gb_pos)  # Corrected the direction of light
 
-######################################################################################
-# Load and store
-######################################################################################
+        light_color = torch.tensor([1.0,1.0,1.0], device=kd.device, dtype=kd.dtype)  # White light color
 
-# Load from latlong .HDR file
-def _load_env_hdr(fn, scale=1.0):
-    latlong_img = torch.tensor(util.load_image(fn), dtype=torch.float32, device='cuda')*scale
-    cubemap = util.latlong_to_cubemap(latlong_img, [512, 512])
+        # Ambient term (constant color contribution)
+        ambient_color = kd * 0.1  # Assuming global ambient light intensity of 0.1
+        ambient = ambient_color
 
-    l = EnvironmentLight(cubemap)
-    l.build_mips()
+        # Diffuse term (matte appearance)
+        diffuse_intensity = torch.clamp(torch.sum(gb_normal * light_dir, dim=-1), min=0)
+        diffuse_color = kd * diffuse_intensity.unsqueeze(-1)
+        diffuse = diffuse_color * light_color
 
-    return l
+        # Specular term (shiny highlights)
+        reflvec = util.safe_normalize(util.reflect(light_dir, gb_normal))  # Corrected the reflection vector
+        specular_intensity = torch.clamp(torch.sum(wo * reflvec, dim=-1), min=0) ** shininess
+        specular_color = ks * specular_intensity.unsqueeze(-1)
+        specular = specular_color * light_color
 
-def load_env(fn, scale=1.0):
-    if os.path.splitext(fn)[1].lower() == ".hdr":
-        return _load_env_hdr(fn, scale)
-    else:
-        assert False, "Unknown envlight extension %s" % os.path.splitext(fn)[1]
+        # Final shaded color
+        shaded_col = diffuse + specular
 
-def save_env_map(fn, light):
-    assert isinstance(light, EnvironmentLight), "Can only save EnvironmentLight currently"
-    if isinstance(light, EnvironmentLight):
-        color = util.cubemap_to_latlong(light.base, [512, 1024])
-    util.save_image_raw(fn, color.detach().cpu().numpy())
+        return shaded_col
+    
+    
+    def schlick_approximation(self, cos_theta, F0):
+        return F0 + (1 - F0) * (1 - cos_theta) ** 5
 
-######################################################################################
-# Create trainable env map with random initialization
-######################################################################################
+    def ggx_distribution(self, NdotH, roughness):
+        alpha = roughness ** 2
+        denom = (NdotH ** 2) * (alpha ** 2 - 1) + 1
+        return alpha ** 2 / (np.pi * denom ** 2)
 
-def create_trainable_env_rnd(base_res, scale=0.5, bias=0.25):
-    base = torch.rand(6, base_res, base_res, 3, dtype=torch.float32, device='cuda') * scale + bias
-    return EnvironmentLight(base)
+    def cook_torrance_shading(self, gb_pos, gb_normal, kd, ks, view_pos, ior=1.0):
+        roughness = ks[..., 1:2]
+        wo = util.safe_normalize(view_pos - gb_pos)
+        light_dir = util.safe_normalize(view_pos - gb_pos)
+        light_color = torch.tensor([1.0, 1.0, 1.0], device=kd.device, dtype=kd.dtype)  # White light color
+
+        # Ambient term (constant color contribution)
+        ambient_color = kd * 0.1  # Assuming global ambient light intensity of 0.1
+        ambient = ambient_color
+
+        # Diffuse term (Lambertian reflection)
+        diffuse_intensity = torch.clamp(torch.sum(gb_normal * light_dir, dim=-1), min=0)
+        diffuse_color = kd * diffuse_intensity.unsqueeze(-1)  # Broadcasting corrected
+        diffuse = diffuse_color * light_color
+
+        # Cook-Torrance specular term (GGX microfacet reflection)
+        NdotH = torch.clamp(torch.sum(gb_normal * util.safe_normalize(light_dir + wo), dim=-1), min=0)
+        VdotH = torch.clamp(torch.sum(wo * util.safe_normalize(light_dir + wo), dim=-1), min=0)
+
+        F0 = ((ior - 1) / (ior + 1)) ** 2
+        F = self.schlick_approximation(VdotH, F0)
+        D = self.ggx_distribution(NdotH, roughness)
+        G = torch.min(1.0, 2 * NdotH * VdotH / VdotH)  # Schlick-Smith approximation for G
+
+        specular_intensity = (F * D * G) / (4 * VdotH * NdotH)
+        specular_color = ks * specular_intensity.unsqueeze(-1)  # Broadcasting corrected
+        specular = specular_color * light_color
+
+        # Final shaded color
+        shaded_col = ambient + diffuse + specular
+
+        return shaded_col
       

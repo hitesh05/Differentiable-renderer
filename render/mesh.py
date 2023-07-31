@@ -1,12 +1,3 @@
-# Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
-#
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction, 
-# disclosure or distribution of this material and related documentation 
-# without an express license agreement from NVIDIA CORPORATION or 
-# its affiliates is strictly prohibited.
-
 import os
 import numpy as np
 import torch
@@ -29,57 +20,14 @@ class Mesh:
         self.t_tng_idx = t_tng_idx
         self.material = material
 
-        if base is not None:
-            self.copy_none(base)
-
-    def copy_none(self, other):
-        if self.v_pos is None:
-            self.v_pos = other.v_pos
-        if self.t_pos_idx is None:
-            self.t_pos_idx = other.t_pos_idx
-        if self.v_nrm is None:
-            self.v_nrm = other.v_nrm
-        if self.t_nrm_idx is None:
-            self.t_nrm_idx = other.t_nrm_idx
-        if self.v_tex is None:
-            self.v_tex = other.v_tex
-        if self.t_tex_idx is None:
-            self.t_tex_idx = other.t_tex_idx
-        if self.v_tng is None:
-            self.v_tng = other.v_tng
-        if self.t_tng_idx is None:
-            self.t_tng_idx = other.t_tng_idx
-        if self.material is None:
-            self.material = other.material
-
-    def clone(self):
-        out = Mesh(base=self)
-        if out.v_pos is not None:
-            out.v_pos = out.v_pos.clone().detach()
-        if out.t_pos_idx is not None:
-            out.t_pos_idx = out.t_pos_idx.clone().detach()
-        if out.v_nrm is not None:
-            out.v_nrm = out.v_nrm.clone().detach()
-        if out.t_nrm_idx is not None:
-            out.t_nrm_idx = out.t_nrm_idx.clone().detach()
-        if out.v_tex is not None:
-            out.v_tex = out.v_tex.clone().detach()
-        if out.t_tex_idx is not None:
-            out.t_tex_idx = out.t_tex_idx.clone().detach()
-        if out.v_tng is not None:
-            out.v_tng = out.v_tng.clone().detach()
-        if out.t_tng_idx is not None:
-            out.t_tng_idx = out.t_tng_idx.clone().detach()
-        return out
-
 ######################################################################################
 # Mesh loeading helper
 ######################################################################################
 
-def load_mesh(filename, ind, mtl_override=None):
+def load_mesh(filename, ind, length, model_components, materials, mtl_override=None):
     name, ext = os.path.splitext(filename)
     if ext == ".glb":
-        return obj.load_obj(filename, ind, clear_ks=True, mtl_override=mtl_override)
+        return obj.load_obj(filename, ind, length, model_components, materials, clear_ks=True, mtl_override=mtl_override)
     assert False, "Invalid mesh file extension"
 
 ######################################################################################
