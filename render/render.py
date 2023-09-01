@@ -1,3 +1,12 @@
+# Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction, 
+# disclosure or distribution of this material and related documentation 
+# without an express license agreement from NVIDIA CORPORATION or 
+# its affiliates is strictly prohibited.
+
 import torch
 import nvdiffrast.torch as dr
 
@@ -56,7 +65,7 @@ def shade(
     ################################################################################
     if 'no_perturbed_nrm' in material and material['no_perturbed_nrm']:
         perturbed_nrm = None
-
+    perturbed_nrm = perturbed_nrm[:,:,:,:3]
     gb_normal = ru.prepare_shading_normal(gb_pos, view_pos, perturbed_nrm, gb_normal, gb_tangent, gb_geometric_normal, two_sided_shading=True, opengl=True)
 
     ################################################################################

@@ -1,3 +1,13 @@
+# Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction, 
+# disclosure or distribution of this material and related documentation 
+# without an express license agreement from NVIDIA CORPORATION or 
+# its affiliates is strictly prohibited.
+
+import os
 import torch
 
 from . import texture
@@ -8,6 +18,16 @@ import numpy as np
 
 def tensor(*args, **kwargs):
     return torch.tensor(*args, device='cuda', **kwargs)
+
+######################################################################################
+# Utility functions
+######################################################################################
+
+def _find_mat(materials, name):
+    for mat in materials:
+        if mat['name'] == name:
+            return mat
+    return materials[0] # Materials 0 is the default
 
 ######################################################################################
 # Create mesh object from objfile
@@ -50,8 +70,7 @@ def load_obj(filename, ind, length, model_components, materials, clear_ks=True, 
     texcoords = texcoords.contiguous()
     
     normals = tensor(normals, dtype=torch.float32)
-    normals = normals.contiguous()
-    
+    normals = normals.contiguous()    
     faces = torch.tensor(faces, dtype=torch.int64, device='cuda')
     tfaces = torch.tensor(tfaces, dtype=torch.int64, device='cuda') if texcoords is not None else None
     nfaces = torch.tensor(nfaces, dtype=torch.int64, device='cuda') if normals is not None else None

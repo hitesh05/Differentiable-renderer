@@ -101,7 +101,7 @@ class EnvironmentLight(torch.nn.Module):
             NdotV = torch.clamp(util.dot(wo, gb_normal), min=1e-4)
             fg_uv = torch.cat((NdotV, roughness), dim=-1)
             if not hasattr(self, '_FG_LUT'):
-                self._FG_LUT = torch.as_tensor(np.fromfile('data/irrmaps/bsdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2), dtype=torch.float32, device='cuda')
+                self._FG_LUT = torch.as_tensor(np.fromfile('/home2/hitesh.goel/3D-modelling/diffusion-materials/thirdparty/differentiableRenderer/data/irrmaps/bsdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2), dtype=torch.float32, device='cuda')
             fg_lookup = dr.texture(self._FG_LUT, fg_uv, filter_mode='linear', boundary_mode='clamp')
 
             # Roughness adjusted specular env lookup
@@ -147,7 +147,7 @@ class EnvironmentLight(torch.nn.Module):
     def ggx_distribution(self, NdotH, roughness):
         alpha = roughness ** 2
         denom = (NdotH ** 2) * (alpha ** 2 - 1) + 1
-        return alpha ** 2 / (np.pi * denom ** 2)
+        return alpha ** 2 / (3.14 * denom ** 2)
 
     def cook_torrance_shading(self, gb_pos, gb_normal, kd, ks, view_pos, ior=1.0):
         roughness = ks[..., 1:2]
@@ -181,4 +181,37 @@ class EnvironmentLight(torch.nn.Module):
         shaded_col = ambient + diffuse + specular
 
         return shaded_col
+######################################################################################
+# Load and store
+######################################################################################
+
+# Load from latlong .HDR file
+def _load_env_hdr(fn, scale=1.0):
+    latlong_img = torch.tensor(util.load_image(fn), dtype=torch.float32, device='cuda')*scale
+    cubemap = util.latlong_to_cubemap(latlong_img, [512, 512])
+
+    l = EnvironmentLight(cubemap)
+    l.build_mips()
+
+    return l
+
+def load_env(fn, scale=1.0):
+    if os.path.splitext(fn)[1].lower() == ".hdr":
+        return _load_env_hdr(fn, scale)
+    else:
+        assert False, "Unknown envlight extension %s" % os.path.splitext(fn)[1]
+
+def save_env_map(fn, light):
+    assert isinstance(light, EnvironmentLight), "Can only save EnvironmentLight currently"
+    if isinstance(light, EnvironmentLight):
+        color = util.cubemap_to_latlong(light.base, [512, 1024])
+    util.save_image_raw(fn, color.detach().cpu().numpy())
+
+######################################################################################
+# Create trainable env map with random initialization
+######################################################################################
+
+def create_trainable_env_rnd(base_res, scale=0.5, bias=0.25):
+    base = torch.rand(6, base_res, base_res, 3, dtype=torch.float32, device='cuda') * scale + bias
+    return EnvironmentLight(base)
       

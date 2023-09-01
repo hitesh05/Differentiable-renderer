@@ -213,7 +213,7 @@ def load_glb(model_path):
             
     apply_transformations(model_components, ref_pose)  
     # out_path = 'textures/'  
-    # materials = extract_materials(glb_mesh)
+    materials = extract_materials(glb_mesh)
     total = len(model_components)
     
-    return total, model_components, None
+    return total, model_components, materials
